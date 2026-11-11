@@ -27,7 +27,7 @@ def search_pubmed(query: str, retmax: int = 5):
             "db": "pubmed",
             # Search titles/abstracts and rank by relevance (PubMed's default
             # returns the newest papers, which are often unrelated).
-            "term": f"({query})[Title/Abstract]",
+            "term": query if "[" in query else f"({query})[Title/Abstract]",
             "sort": "relevance",
             "retmode": "json",
             "retmax": retmax,
@@ -105,7 +105,7 @@ def search_openfda_drug(drug_name: str, limit: int = 3):
     try:
         params = {
             "search": f'openfda.generic_name:"{drug_name}" OR openfda.brand_name:"{drug_name}"',
-            "limit": limit,
+            "limit": max(limit, 10),  # fetch more, then keep the best matches
         }
 
         response = requests.get(OPENFDA_DRUG_LABEL_URL, params=params, timeout=30)
@@ -120,8 +120,18 @@ def search_openfda_drug(drug_name: str, limit: int = 3):
         response.raise_for_status()
         data = response.json()
 
+        def rank(item):
+            """Single-ingredient labels first ('METFORMIN HYDROCHLORIDE' before
+            'SITAGLIPTIN AND METFORMIN HYDROCHLORIDE'), then shorter names."""
+            names = (item.get("openfda", {}) or {}).get("generic_name", []) or [""]
+            name = names[0].lower()
+            combination = " and " in name or "," in name
+            return (drug_name.lower() not in name, combination, len(name))
+
+        items = sorted(data.get("results", []), key=rank)
+
         results = []
-        for item in data.get("results", []):
+        for item in items:
             openfda = item.get("openfda", {}) or {}
 
             results.append({
@@ -133,6 +143,7 @@ def search_openfda_drug(drug_name: str, limit: int = 3):
                 "warnings": item.get("warnings", []),
             })
 
+        results = results[:limit]
         return {
             "drug_name": drug_name,
             "count": len(results),
@@ -233,8 +244,13 @@ def extract_clinical_context(payload: dict):
         pubmed_queries.append(f"{d} treatment")
     for s in symptoms:
         pubmed_queries.append(f"{s} diagnosis")
+    search_terms = {q: q for q in pubmed_queries}
     for med in medications:
-        pubmed_queries.append(f"{med} adverse effects")
+        label = f"{med} adverse effects"
+        pubmed_queries.append(label)
+        # MeSH "Drug/adverse effects" tag, or the drug in the title plus "adverse effects"
+        search_terms[label] = (f'"{med}/adverse effects"[MeSH Terms] OR '
+                               f'("{med}"[Title] AND "adverse effects"[Title/Abstract])')
 
     literature = []
     seen = set()
@@ -243,7 +259,9 @@ def extract_clinical_context(payload: dict):
         if query not in seen:
             seen.add(query)
             try:
-                literature.append(pubmed_lookup(query, retmax=1))
+                result = pubmed_lookup(search_terms[query], retmax=1)
+                result["query"] = query  # show the readable query, not the search syntax
+                literature.append(result)
             except Exception as e:
                 literature.append({
                     "query": query,
