@@ -1,10 +1,15 @@
-from transformers import pipeline
+import re
+from functools import lru_cache
 
-ner_pipeline = pipeline(
-    "token-classification",
-    model="d4data/biomedical-ner-all",
-    aggregation_strategy="simple"
-)
+MODEL_NAME = "d4data/biomedical-ner-all"
+
+
+@lru_cache(maxsize=1)
+def get_ner_pipeline():
+    """Load the biomedical NER model once, on first use (downloads ~260 MB the first time)."""
+    from transformers import pipeline
+
+    return pipeline("token-classification", model=MODEL_NAME, aggregation_strategy="simple")
 
 KNOWN_DIAGNOSES = {
     "hypertension",
@@ -89,55 +94,137 @@ def clean_entity_text(clinical_note: str, item: dict) -> str:
     return item.get("word", "").strip()
 
 
-def extract_entities_with_bert(clinical_note: str):
-    results = ner_pipeline(clinical_note)
+# Generic words the model sometimes tags as a medication ("current medications include ...").
+GENERIC_MEDICATION_WORDS = {"medication", "medications", "meds", "drug", "drugs", "medicine", "medicines"}
+DIAGNOSIS_GROUPS = {"disease_disorder", "disease", "diagnosis", "history"}
+SYMPTOM_GROUPS = {"sign_symptom", "symptom"}
 
-    medications = []
-    symptoms = []
-    diagnoses = []
+
+def merge_word_pieces(clinical_note: str, results: list) -> list:
+    """Join fragments of one word that the model returned separately,
+    e.g. 'di' + 'zziness' -> 'dizziness' (same label, no gap between them)."""
+    merged = []
+    for item in sorted(results, key=lambda r: (r.get("start") or 0)):
+        item = dict(item)
+        if merged:
+            prev = merged[-1]
+            touching = prev.get("end") == item.get("start")
+            inside_word = (item.get("start") or 0) > 0 and clinical_note[item["start"] - 1].isalnum() \
+                and clinical_note[item["start"]].isalnum()
+            if touching and inside_word:
+                prev["end"] = item["end"]
+                prev["word"] = clinical_note[prev["start"]:prev["end"]]
+                prev["score"] = min(float(prev["score"]), float(item["score"]))
+                continue
+        merged.append(item)
+    return merged
+
+
+def attach_body_parts(clinical_note: str, results: list) -> list:
+    """'chest' (Biological_structure) right before 'pain' (Sign_symptom) -> 'chest pain'."""
+    out = []
+    for item in results:
+        group = item.get("entity_group", "").lower()
+        if out and group in SYMPTOM_GROUPS:
+            prev = out[-1]
+            gap = clinical_note[prev["end"]:item["start"]] if prev.get("end") is not None else "x"
+            if prev.get("entity_group", "").lower() == "biological_structure" and gap.strip() == "":
+                out[-1] = {**item, "start": prev["start"],
+                           "word": clinical_note[prev["start"]:item["end"]],
+                           "score": min(float(prev["score"]), float(item["score"]))}
+                continue
+        out.append(item)
+    return out
+
+
+_UNIT = re.compile(r"^\s*(mg|mcg|µg|g|ml|mL|units?|iu|IU|%)\b")
+
+
+def complete_dosage(clinical_note: str, item: dict) -> dict:
+    """'81' followed by ' mg' in the note -> '81 mg'."""
+    m = _UNIT.match(clinical_note[item["end"]:])
+    if m:
+        item = {**item, "end": item["end"] + m.end(),
+                "word": clinical_note[item["start"]:item["end"] + m.end()]}
+    return item
+
+
+def dictionary_matches(clinical_note: str, terms: set, already_found: list) -> list:
+    """Known terms written in the note that the model missed (whole-word, case-insensitive)."""
+    found = {normalize_text(x) for x in already_found}
+    hits = []
+    for term in sorted(terms, key=len, reverse=True):
+        if term in found or any(term in f for f in found):
+            continue
+        if re.search(rf"\b{re.escape(term)}\b", clinical_note, re.I):
+            hits.append(term)
+            found.add(term)
+    return hits
+
+
+def structure_entities(clinical_note: str, results: list) -> dict:
+    """Turn raw NER output into medications (with dosage), symptoms and diagnoses."""
+    results = attach_body_parts(clinical_note, merge_word_pieces(clinical_note, results))
+
+    medications, symptoms, diagnoses = [], [], []
+    medication_details = []
     processed_entities = []
 
     for item in results:
         entity_text = clean_entity_text(clinical_note, item)
         entity_group = item.get("entity_group", "").strip()
-
         if not entity_text:
             continue
 
         entity_text_norm = normalize_text(entity_text)
-        entity_group_lower = entity_group.lower()
+        group = entity_group.lower()
 
         processed_entities.append({
             "text": entity_text,
             "normalized_text": entity_text_norm,
             "entity_group": entity_group,
-            "score": item.get("score"),
+            "source": "bert",
+            # The model returns numpy.float32, which FastAPI cannot serialise to JSON.
+            "score": round(float(item["score"]), 4) if item.get("score") is not None else None,
             "start": item.get("start"),
             "end": item.get("end"),
         })
 
-        if entity_group_lower == "medication":
+        if group == "medication":
+            if entity_text_norm in GENERIC_MEDICATION_WORDS:
+                continue
             medications.append(entity_text)
-
-        elif entity_group_lower in {"sign_symptom", "symptom"}:
-            if entity_text_norm in KNOWN_DIAGNOSES:
-                diagnoses.append(entity_text)
-            elif entity_text_norm in KNOWN_SYMPTOMS:
-                symptoms.append(entity_text)
-            else:
-                symptoms.append(entity_text)
-
-        elif entity_group_lower in {"disease_disorder", "disease", "diagnosis"}:
+            if not any(normalize_text(d["name"]) == entity_text_norm for d in medication_details):
+                medication_details.append({"name": entity_text, "dosage": None})
+        elif group == "dosage" and medication_details and medication_details[-1]["dosage"] is None:
+            # dose follows its drug in the note; keep its unit ("81" -> "81 mg")
+            medication_details[-1]["dosage"] = clean_entity_text(
+                clinical_note, complete_dosage(clinical_note, item))
+        elif group in SYMPTOM_GROUPS:
+            (diagnoses if entity_text_norm in KNOWN_DIAGNOSES else symptoms).append(entity_text)
+        elif group in DIAGNOSIS_GROUPS:
             diagnoses.append(entity_text)
 
-    medications = unique_keep_order(medications)
-    symptoms = unique_keep_order(symptoms)
-    diagnoses = unique_keep_order(diagnoses)
+    # Safety net: common terms the model missed are added from a small dictionary
+    # and marked with source="dictionary" so it is clear where they came from.
+    for term in dictionary_matches(clinical_note, KNOWN_SYMPTOMS, symptoms + diagnoses):
+        symptoms.append(term)
+        processed_entities.append({"text": term, "normalized_text": term,
+                                   "entity_group": "Sign_symptom", "source": "dictionary"})
+    for term in dictionary_matches(clinical_note, KNOWN_DIAGNOSES, diagnoses + symptoms):
+        diagnoses.append(term)
+        processed_entities.append({"text": term, "normalized_text": term,
+                                   "entity_group": "Disease_disorder", "source": "dictionary"})
 
     return {
         "clinical_note": clinical_note,
-        "medications": medications,
-        "symptoms": symptoms,
-        "diagnoses": diagnoses,
-        "raw_entities": processed_entities
+        "medications": unique_keep_order(medications),
+        "medication_details": medication_details,
+        "symptoms": unique_keep_order(symptoms),
+        "diagnoses": unique_keep_order(diagnoses),
+        "raw_entities": processed_entities,
     }
+
+
+def extract_entities_with_bert(clinical_note: str):
+    return structure_entities(clinical_note, get_ner_pipeline()(clinical_note))
