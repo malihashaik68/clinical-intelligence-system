@@ -5,7 +5,9 @@ Full-stack AI application that turns an unstructured physician note into structu
 > Built as a team project for the Saint Peter's University Academic Symposium.
 > **My contributions:** the backend: BERT entity-extraction pipeline, FastAPI API, and PubMed / OpenFDA / RxNorm integration.
 
-![Note analysis](docs/dashboard_analyse.png)
+**▶ Live demo:** _link added after deployment (see [Online demo](#online-demo-streamlit))_
+
+![Note analysis](docs/streamlit_analyse.png)
 
 ## How it works
 
@@ -47,7 +49,28 @@ python -m evaluation.evaluate      # writes evaluation/results.md
 
 The notes were written for this evaluation and the code was not tuned on them afterwards. It is a small set, so treat the numbers as indicative.
 
+## Online demo (Streamlit)
+
+`streamlit_app/app.py` runs the whole pipeline in one process, so it can be hosted for free on
+[Streamlit Community Cloud](https://share.streamlit.io): repository `malihashaik68/clinical-intelligence-system`,
+branch `main`, main file `streamlit_app/app.py`. It has four tabs: **Analyse a note**, **Similar cases (RAG)**,
+**Records & analytics** and **Model evaluation**. Five example cases are loaded at start-up, so search works immediately.
+
+To fit the free tier, the 2.2 GB TinyLlama step is off online (`RAG_USE_LLM=0`); RAG answers then come
+straight from the most similar record. Everything else (BERT, severity, RxNorm / OpenFDA / PubMed,
+vector search, analytics, evaluation) runs for real. Locally: `streamlit run streamlit_app/app.py`.
+
+<p>
+<img src="docs/streamlit_rag.png" width="49%" alt="Streamlit RAG tab">
+<img src="docs/streamlit_eval.png" width="49%" alt="Streamlit evaluation tab">
+</p>
+
 ## Dashboard (React + TypeScript)
+
+The full web app for running locally against the FastAPI backend (includes the TinyLlama summaries).
+
+![React dashboard](docs/dashboard_analyse.png)
+
 
 | Tab | What it shows |
 |---|---|
@@ -115,4 +138,4 @@ pytest -q
 
 ## Tech stack
 
-Python · FastAPI · Hugging Face Transformers (BERT NER, TinyLlama) · Sentence-Transformers · ChromaDB · PyTorch · SQLAlchemy / SQLite · RxNorm, OpenFDA, PubMed (NCBI E-utilities) · React · TypeScript · Vite · pytest · GitHub Actions
+Python · FastAPI · Hugging Face Transformers (BERT NER, TinyLlama) · Sentence-Transformers · ChromaDB · PyTorch · SQLAlchemy / SQLite · RxNorm, OpenFDA, PubMed (NCBI E-utilities) · React · TypeScript · Vite · Streamlit · pytest · GitHub Actions
