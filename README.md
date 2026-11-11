@@ -101,7 +101,7 @@ API instead: `uvicorn backend.app.main:app --reload`, then `POST /auth/login` an
 pytest -q
 ```
 
-36 tests, under 2 seconds, no model downloads: access control (other hospitals denied, one-time codes, emergency reason required, logging), summaries and alerts, Q&A guardrails, FHIR bundle, emergency card, API authentication, plus the note-analyser tests. GitHub Actions runs them on every push.
+35 tests, under 2 seconds, no model downloads: access control (other hospitals denied, one-time codes, emergency reason required, logging), summaries and alerts, Q&A guardrails, FHIR bundle, emergency card, API authentication, plus the note-analyser tests. GitHub Actions runs them on every push.
 
 ## Limitations (and what a real deployment needs)
 
