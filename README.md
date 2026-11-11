@@ -67,7 +67,7 @@ clinical note ─► Note analyser (BERT NER + allergy rules + severity) ─► 
                     → guarded local LLM)
 ```
 
-Interfaces: **Streamlit app** (`streamlit_app/app.py`) and a **FastAPI** backend (`/auth/login`, `/patients/...`; docs at `/docs`).
+Interfaces: **Streamlit app** (`streamlit_app/app.py`, hosted demo), **React + TypeScript dashboard** (`frontend/`) and a **FastAPI** backend (`/auth/login`, `/patients/...`, `/extract/analyze`; docs at `/docs`).
 
 ## Note analyser evaluation
 
@@ -91,7 +91,16 @@ pip install -r requirements.txt streamlit pandas
 streamlit run streamlit_app/app.py          # demo data is created on first start
 ```
 
-API instead: `uvicorn backend.app.main:app --reload`, then `POST /auth/login` and use the token as `Authorization: Bearer <token>`.
+React dashboard (same workflow, against the API):
+
+```bash
+uvicorn backend.app.main:app --reload       # terminal 1: API on :8000, demo data created on start
+cd frontend && npm install && npm run dev    # terminal 2: http://localhost:5173
+```
+
+API directly: `POST /auth/login`, then send the token as `Authorization: Bearer <token>`.
+
+![React dashboard](docs/react_summary.png)
 
 **Deploy free on Streamlit Community Cloud:** repository `malihashaik68/clinical-intelligence-system`, branch `main`, main file `streamlit_app/app.py`. First start takes a few minutes (models download). If the app runs out of memory, add `QA_USE_LLM = "0"` in the app's Secrets (answers then come from rules + retrieval), or host on Hugging Face Spaces (more memory). Settings: `QA_LLM_MODEL` (default `Qwen/Qwen2.5-0.5B-Instruct`; `Qwen/Qwen2.5-1.5B-Instruct` phrases better), `APP_SECRET_KEY` for API tokens.
 
@@ -108,8 +117,7 @@ pytest -q
 - **Demo, not a medical device**: fictional data; a real system needs regulatory compliance (HIPAA, India's DPDP Act), certified security, real identity verification and SMS delivery, and integration with hospital systems (FHIR APIs).
 - Hospitals are simulated in one database; in production each hospital's records would stay on its own servers and travel as FHIR.
 - Drug-safety rules are a small curated set, not a complete interaction database. No negation handling ("denies fever").
-- The React dashboard in `frontend/` is from the earlier note-analyser version and has not been updated for login.
 
 ## Tech stack
 
-Python · FastAPI · Streamlit · Hugging Face Transformers (BERT NER, Qwen2.5 local LLM) · Sentence-Transformers · PyTorch · SQLAlchemy / SQLite · HL7 FHIR · RxNorm, OpenFDA, PubMed APIs · ChromaDB · qrcode / Pillow · pytest · GitHub Actions
+Python · FastAPI · Streamlit · React · TypeScript · Hugging Face Transformers (BERT NER, Qwen2.5 local LLM) · Sentence-Transformers · PyTorch · SQLAlchemy / SQLite · HL7 FHIR · RxNorm, OpenFDA, PubMed APIs · ChromaDB · qrcode / Pillow · pytest · GitHub Actions

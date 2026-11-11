@@ -97,3 +97,32 @@ th { color: var(--muted); font-weight: 600; }
   .card { padding: 14px; }
   header h1 { font-size: 20px; }
 }
+
+/* --- patient workflow --- */
+.login { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; padding-top: 40px; }
+.login label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--muted); }
+.clickable { cursor: pointer; }
+.clickable:hover { background: #f6f8fb; }
+code { background: #eef1f5; padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+button.danger { background: var(--high); border-color: var(--high); color: #fff; font-weight: 600; }
+a.button { display: inline-block; text-decoration: none; border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; color: var(--text); background: #fff; }
+.back { align-self: flex-start; }
+.locked { border-color: #f1c4bf; }
+.info { background: #e6effa; color: #174a85; padding: 8px 12px; border-radius: 8px; margin: 0; }
+.ok { background: var(--low-bg); color: var(--low); padding: 8px 12px; border-radius: 8px; }
+.alert { padding: 10px 12px; border-radius: 8px; margin: 6px 0; }
+.alert-high { background: var(--high-bg); color: var(--high); }
+.alert-medium { background: var(--medium-bg); color: var(--medium); }
+.alert-low { background: var(--low-bg); color: var(--low); }
+.alert b:first-child { text-transform: capitalize; }
+.subnav { display: flex; gap: 4px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+.subnav button { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; color: var(--muted); white-space: nowrap; }
+.subnav button.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.grid-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 14px; }
+.grid4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.chip-allergy { background: var(--high-bg); color: var(--high); }
+input.date { max-width: 180px; flex: 0 0 auto; min-width: 0; }
+.emergency-card { width: 100%; max-width: 720px; border: 1px solid var(--border); border-radius: 8px; }
+.row-emergency td { background: var(--high-bg); }
+footer { padding: 24px 0; text-align: center; }
+@media (max-width: 760px) { .grid-summary { grid-template-columns: 1fr; } }

@@ -1,52 +1,56 @@
 import { useEffect, useState } from "react";
-import { api, API_URL } from "./api";
+import { api } from "./api";
+import { Login } from "./components/Login";
 import { NoteAnalyzer } from "./components/NoteAnalyzer";
-import { RecordsAndAnalytics } from "./components/RecordsAndAnalytics";
-import { SimilarCases } from "./components/SimilarCases";
+import { PatientPage } from "./components/PatientPage";
+import { FindPatient, MyPatients } from "./components/PatientLists";
+import type { User } from "./types";
 
-type Tab = "analyze" | "similar" | "records";
+type Page = "mine" | "find" | "analyser";
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "analyze", label: "Note analysis" },
-  { id: "similar", label: "Similar cases (RAG)" },
-  { id: "records", label: "Records & analytics" },
-];
+const PAGES: [Page, string][] = [["mine", "My patients"], ["find", "Find a patient"], ["analyser", "Note analyser"]];
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("analyze");
-  const [online, setOnline] = useState<boolean | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [user, setUser] = useState<User | null>(null);
+  const [checking, setChecking] = useState(api.hasToken());
+  const [page, setPage] = useState<Page>("mine");
+  const [patientId, setPatientId] = useState<number | null>(null);
 
   useEffect(() => {
-    api.health().then(() => setOnline(true)).catch(() => setOnline(false));
+    if (!api.hasToken()) return;
+    api.me().then(setUser).catch(() => api.logout()).finally(() => setChecking(false));
   }, []);
+
+  if (checking) return <p className="muted app">Loading…</p>;
+  if (!user) return <div className="app"><Login onLogin={setUser} /></div>;
 
   return (
     <div className="app">
       <header>
         <div>
           <h1>Clinical Intelligence</h1>
-          <p>BERT entity extraction · RxNorm / OpenFDA / PubMed grounding · RAG over past cases</p>
+          <p>{user.full_name} · {user.role} · 🏥 {user.hospital_name}</p>
         </div>
-        <span className={`status ${online ? "ok" : online === false ? "down" : ""}`}>
-          {online === null ? "connecting…" : online ? "backend online" : `backend offline (${API_URL})`}
-        </span>
+        <button className="ghost" onClick={() => { api.logout(); setUser(null); setPatientId(null); }}>Log out</button>
       </header>
       <nav>
-        {TABS.map((t) => (
-          <button key={t.id} className={tab === t.id ? "active" : ""} onClick={() => setTab(t.id)}>
-            {t.label}
-          </button>
+        {PAGES.map(([p, label]) => (
+          <button key={p} className={page === p && patientId === null ? "active" : ""}
+                  onClick={() => { setPage(p); setPatientId(null); }}>{label}</button>
         ))}
       </nav>
       <main>
-        {/* Keep the analyser mounted so its result survives tab switches. */}
-        <div hidden={tab !== "analyze"}>
-          <NoteAnalyzer onSaved={() => setRefreshKey((k) => k + 1)} />
-        </div>
-        {tab === "similar" && <SimilarCases />}
-        {tab === "records" && <RecordsAndAnalytics refreshKey={refreshKey} />}
+        {patientId !== null ? (
+          <PatientPage id={patientId} onBack={() => setPatientId(null)} />
+        ) : page === "mine" ? (
+          <MyPatients hospital={user.hospital_name} onOpen={setPatientId} />
+        ) : page === "find" ? (
+          <FindPatient onOpen={setPatientId} />
+        ) : (
+          <NoteAnalyzer />
+        )}
       </main>
+      <footer className="muted small">Fictional demo data · decision support only, not medical advice</footer>
     </div>
   );
 }
