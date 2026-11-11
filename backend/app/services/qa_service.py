@@ -32,6 +32,7 @@ SYSTEM_PROMPT = (
     "You are a clinical assistant helping a doctor. Answer the question using ONLY the evidence sentences. "
     "Do not add medical knowledge, reasons or advice that are not written in the evidence. "
     "If the evidence does not answer the question, reply exactly: The record does not state this. "
+    "Answer directly (do not start with 'The evidence states'). "
     "Cite the record id in brackets, for example [R3]. One or two short sentences."
 )
 
@@ -176,7 +177,11 @@ def _known_terms(records: list[dict]) -> set[str]:
 
 _STOPWORDS = {"which", "there", "their", "about", "would", "could", "should", "these", "those", "other",
               "patient", "patients", "record", "records", "state", "states", "evidence", "since", "while",
-              "being", "having", "after", "before", "where", "taking", "takes", "given"}
+              "being", "having", "after", "before", "where", "taking", "takes", "given",
+              # neutral reporting verbs: they describe the note, they don't add facts
+              "experienced", "experiences", "experiencing", "reported", "reports", "reporting",
+              "presented", "presents", "presenting", "noted", "notes", "described", "describes",
+              "mentioned", "mentions", "documented", "recorded", "states", "stated", "showed", "shows"}
 
 
 def _content_overlap(answer: str, evidence_text: str) -> float:
@@ -187,6 +192,19 @@ def _content_overlap(answer: str, evidence_text: str) -> float:
 
 
 MIN_OVERLAP = float(os.getenv("QA_MIN_OVERLAP", "0.75"))
+
+
+_QUESTION_WORDS = {"what", "when", "where", "which", "does", "did", "happened", "happen", "with", "about",
+                   "have", "been", "patient", "they", "their", "this", "that", "there", "were", "was",
+                   "how", "why", "is", "are", "the", "and", "her", "his", "she", "him"}
+
+
+def relevant(answer: str, question: str) -> bool:
+    """The answer must mention at least one key word of the question (4+ letters, by stem).
+    Catches answers that use real words from the notes but don't address the question."""
+    stems = lambda t: {w[:5] for w in re.findall(r"[a-z]{4,}", t.lower()) if w not in _QUESTION_WORDS}
+    key = stems(question)
+    return not key or bool(key & stems(answer))
 
 
 def grounded(answer: str, evidence: list[dict], records: list[dict], question: str = "") -> bool:
@@ -211,10 +229,26 @@ def _llm_answer(question: str, evidence: list[dict]) -> str:
     text = "\n".join(f"[R{e['record_id']}, {e['source']}] {e['text']}" for e in evidence)
     msgs = [{"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"Evidence:\n{text}\n\nQuestion: {question}"}]
-    out = get_llm()(msgs, max_new_tokens=90, do_sample=False)[0]["generated_text"][-1]["content"].strip()
-    # small models sometimes echo half a citation at the start: "City General, 2026-01-15] ..."
-    out = re.sub(r"^\[?[^\[\]]{0,80}\]\s*", "", out) if re.match(r"^\[?[^\[\]]{0,80}\]", out) else out
-    return out.strip().strip("[]").strip()
+    out = get_llm()(msgs, max_new_tokens=90, do_sample=False)[0]["generated_text"][-1]["content"]
+    return clean_llm_text(out)
+
+
+_CITATION = re.compile(r"^\[?\s*(R\d+|[^\[\]]*(hospital|center|clinic|\d{4}-\d{2}-\d{2})[^\[\]]*)\]\s*", re.I)
+_FILLER = re.compile(r"^(based on the (evidence|notes?|records?)( provided)?|according to the (evidence|notes?|records?)"
+                     r"|the evidence (states|shows|indicates) that)[,:]?\s*", re.I)
+
+
+def clean_llm_text(text: str) -> str:
+    """Tidy small-model output: unwrap '[whole answer]', drop a leading echoed citation
+    ('[R5, Riverside, 2026-11-01] ...') and filler like 'Based on the evidence provided,'."""
+    out = text.strip()
+    if out.startswith("[") and out.endswith("]") and out.count("[") == 1:
+        out = out[1:-1].strip()
+    rest = _CITATION.sub("", out, count=1)
+    if rest.strip():
+        out = rest.strip()
+    out = _FILLER.sub("", out).strip()
+    return out[:1].upper() + out[1:] if out else out
 
 
 # ------------------------------------------------------------------ public
@@ -244,10 +278,14 @@ def answer_question(question: str, summary: dict, records: list[dict], patient: 
         except Exception as exc:  # model missing / out of memory -> fall back to the evidence
             text, llm_note = "", f"LLM unavailable ({exc.__class__.__name__}: {str(exc)[:120]})."
         else:
-            if text and grounded(text, evidence, records, question):
+            if text and grounded(text, evidence, records, question) and relevant(text, question):
                 return _answer(text, "local LLM", evidence)
-            llm_note = (f"LLM draft rejected by the safety check (it contained words or facts not in the "
-                        f"notes): “{text}”" if text else "The LLM returned an empty answer.")
+            if not text:
+                llm_note = "The LLM returned an empty answer."
+            elif not grounded(text, evidence, records, question):
+                llm_note = f"LLM draft rejected: it contained words or facts not in the notes: “{text}”"
+            else:
+                llm_note = f"LLM draft rejected: it did not address the question: “{text}”"
     result = _answer("Most relevant notes from the record are shown below.", "retrieval", evidence)
     result["llm_note"] = llm_note
     return result

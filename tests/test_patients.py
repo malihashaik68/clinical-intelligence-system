@@ -274,3 +274,31 @@ def test_last_visit_question_is_answered_directly():
     s, recs, p = _priya_context()
     a = qa.answer_question("What happened at the last visit?", s, recs, p, use_llm=False)
     assert a["method"] == "summary" and a["answer"].startswith("Last visit:")
+
+
+
+def test_grounding_accepts_neutral_reporting_verbs():
+    ev = [{"record_id": 5, "text": "Seen in the emergency department for knee pain and swelling after a fall.",
+           "source": "Riverside Medical Center, 2026-11-01"}]
+    q = "How did the knee pain start"
+    assert qa.grounded("The evidence states that the patient experienced knee pain and swelling after a fall.", ev, [], q)
+    assert not qa.grounded("The patient experienced knee pain after a skiing injury and a fracture.", ev, [], q)
+
+
+
+@pytest.mark.parametrize("raw,clean", [
+    ("[Based on the evidence provided, the knee pain started due to a fall.]", "The knee pain started due to a fall."),
+    ("[R5, Riverside Medical Center, 2026-11-01] Knee pain after a fall.", "Knee pain after a fall."),
+    ("City General Hospital, 2026-01-15] Continues metformin 500 mg twice daily.", "Continues metformin 500 mg twice daily."),
+    ("The evidence states that the patient had a fall [R5].", "The patient had a fall [R5]."),
+    ("[R3]", "R3"),
+])
+def test_clean_llm_text(raw, clean):
+    assert qa.clean_llm_text(raw) == clean
+
+
+
+def test_relevance_check_rejects_answers_that_miss_the_question():
+    assert qa.relevant("The knee pain started due to a fall.", "How did the knee pain start?")
+    assert not qa.relevant("Osteoarthritis", "How did the knee pain start?")
+    assert qa.relevant("Acute bronchitis with productive cough and fever.", "What happened with the bronchitis?")
