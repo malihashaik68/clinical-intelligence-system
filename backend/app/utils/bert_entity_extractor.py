@@ -35,6 +35,22 @@ KNOWN_SYMPTOMS = {
     "nausea",
     "vomiting",
     "abdominal pain",
+    "leg swelling",
+    "swelling",
+    "edema",
+}
+
+KNOWN_MEDICATIONS = {
+    "metformin",
+    "aspirin",
+    "ibuprofen",
+    "paracetamol",
+    "acetaminophen",
+    "lisinopril",
+    "amlodipine",
+    "atorvastatin",
+    "insulin",
+    "omeprazole",
 }
 
 
@@ -154,7 +170,7 @@ def dictionary_matches(clinical_note: str, terms: set, already_found: list) -> l
     found = {normalize_text(x) for x in already_found}
     hits = []
     for term in sorted(terms, key=len, reverse=True):
-        if term in found or any(term in f for f in found):
+        if term in found or any(term in f for f in found if f):
             continue
         if re.search(rf"\b{re.escape(term)}\b", clinical_note, re.I):
             hits.append(term)
@@ -207,11 +223,18 @@ def structure_entities(clinical_note: str, results: list) -> dict:
 
     # Safety net: common terms the model missed are added from a small dictionary
     # and marked with source="dictionary" so it is clear where they came from.
+    for term in dictionary_matches(clinical_note, KNOWN_MEDICATIONS, medications):
+        medications.append(term)
+        medication_details.append({"name": term, "dosage": None})
+        processed_entities.append({"text": term, "normalized_text": term,
+                                   "entity_group": "Medication", "source": "dictionary"})
     for term in dictionary_matches(clinical_note, KNOWN_SYMPTOMS, symptoms + diagnoses):
         symptoms.append(term)
         processed_entities.append({"text": term, "normalized_text": term,
                                    "entity_group": "Sign_symptom", "source": "dictionary"})
     for term in dictionary_matches(clinical_note, KNOWN_DIAGNOSES, diagnoses + symptoms):
+        # 'chronic kidney disease' replaces the shorter 'kidney disease' found by the model
+        diagnoses[:] = [d for d in diagnoses if normalize_text(d) not in term]
         diagnoses.append(term)
         processed_entities.append({"text": term, "normalized_text": term,
                                    "entity_group": "Disease_disorder", "source": "dictionary"})
