@@ -212,6 +212,8 @@ def ask_tab(pid, patient, summary, records):
             st.markdown(f"**Q: {q}**")
             st.markdown(ans["answer"].replace("\n", "  \n"))
             st.caption(f"Answered by: {ans['method']}")
+            if ans.get("llm_note"):
+                st.caption("ℹ️ " + ans["llm_note"])
             if ans["evidence"]:
                 with st.expander("Source sentences"):
                     for e in ans["evidence"]:

@@ -41,7 +41,7 @@ def _src(item: dict) -> str:
 
 
 def _answer(text: str, method: str, evidence: list[dict] | None = None) -> dict:
-    return {"answer": text, "method": method, "evidence": evidence or []}
+    return {"answer": text, "method": method, "evidence": evidence or [], "llm_note": ""}
 
 
 # --------------------------------------------------------- 1. direct answers
@@ -237,12 +237,17 @@ def answer_question(question: str, summary: dict, records: list[dict], patient: 
 
     if use_llm is None:
         use_llm = USE_LLM
+    llm_note = "LLM answers are switched off."
     if use_llm:
         try:
             text = _llm_answer(question, evidence)
+        except Exception as exc:  # model missing / out of memory -> fall back to the evidence
+            text, llm_note = "", f"LLM unavailable ({exc.__class__.__name__}: {str(exc)[:120]})."
+        else:
             if text and grounded(text, evidence, records, question):
                 return _answer(text, "local LLM", evidence)
-        except Exception as exc:  # model missing / out of memory -> fall back to the evidence
-            return _answer(f"(LLM unavailable: {exc.__class__.__name__}) Most relevant notes are shown below.",
-                           "retrieval", evidence)
-    return _answer("Most relevant notes from the record are shown below.", "retrieval", evidence)
+            llm_note = (f"LLM draft rejected by the safety check (it contained words or facts not in the "
+                        f"notes): “{text}”" if text else "The LLM returned an empty answer.")
+    result = _answer("Most relevant notes from the record are shown below.", "retrieval", evidence)
+    result["llm_note"] = llm_note
+    return result
