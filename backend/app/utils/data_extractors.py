@@ -219,7 +219,7 @@ def normalize_drug_rxnorm(drug_name: str):
         }
 
 
-def extract_clinical_context(payload: dict):
+def extract_clinical_context(payload: dict, include_literature: bool = True):
     medications = payload.get("medications", []) or []
     symptoms = payload.get("symptoms", []) or []
     diagnoses = payload.get("diagnoses", []) or []
@@ -255,7 +255,7 @@ def extract_clinical_context(payload: dict):
     literature = []
     seen = set()
 
-    for query in pubmed_queries:
+    for query in (pubmed_queries if include_literature else []):
         if query not in seen:
             seen.add(query)
             try:

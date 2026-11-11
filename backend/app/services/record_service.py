@@ -22,7 +22,8 @@ def make_json_serializable(obj):
         return obj
 
 
-def save_clinical_record(clinical_note: str, extracted_entities: dict, api_results: dict):
+def save_clinical_record(clinical_note: str, extracted_entities: dict, api_results: dict,
+                         patient_id=None, hospital_id=None, practitioner_id=None, visit_date=None):
     db = SessionLocal()
 
     try:
@@ -32,7 +33,11 @@ def save_clinical_record(clinical_note: str, extracted_entities: dict, api_resul
         record = ClinicalRecord(
             clinical_note=clinical_note,
             extracted_entities=json.dumps(safe_extracted_entities),
-            api_results=json.dumps(safe_api_results)
+            api_results=json.dumps(safe_api_results),
+            patient_id=patient_id,
+            hospital_id=hospital_id,
+            practitioner_id=practitioner_id,
+            visit_date=visit_date,
         )
 
         db.add(record)
