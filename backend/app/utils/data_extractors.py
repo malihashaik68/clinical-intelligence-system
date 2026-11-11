@@ -8,19 +8,32 @@ RXNORM_APPROX_URL = "https://rxnav.nlm.nih.gov/REST/approximateTerm.json"
 RXNORM_PROPERTIES_URL = "https://rxnav.nlm.nih.gov/REST/rxcui/{rxcui}/properties.json"
 
 
+def _get_with_retry(url: str, params: dict, attempts: int = 4):
+    """GET with backoff on HTTP 429. NCBI allows ~3 requests/second without an API key."""
+    for attempt in range(attempts):
+        response = requests.get(url, params=params, timeout=30)
+        if response.status_code != 429 or attempt == attempts - 1:
+            response.raise_for_status()
+            return response
+        wait = response.headers.get("Retry-After")
+        time.sleep(float(wait) if wait and wait.isdigit() else 1.5 * (attempt + 1))
+
+
 def search_pubmed(query: str, retmax: int = 5):
     try:
         time.sleep(1)
 
         params = {
             "db": "pubmed",
-            "term": query,
+            # Search titles/abstracts and rank by relevance (PubMed's default
+            # returns the newest papers, which are often unrelated).
+            "term": f"({query})[Title/Abstract]",
+            "sort": "relevance",
             "retmode": "json",
             "retmax": retmax,
         }
 
-        response = requests.get(PUBMED_ESEARCH_URL, params=params, timeout=30)
-        response.raise_for_status()
+        response = _get_with_retry(PUBMED_ESEARCH_URL, params)
         data = response.json()
 
         return data.get("esearchresult", {}).get("idlist", [])
@@ -41,8 +54,7 @@ def fetch_pubmed_summaries(pmids):
             "retmode": "json",
         }
 
-        response = requests.get(PUBMED_ESUMMARY_URL, params=params, timeout=30)
-        response.raise_for_status()
+        response = _get_with_retry(PUBMED_ESUMMARY_URL, params)
         data = response.json()
 
         result = data.get("result", {})
