@@ -160,3 +160,59 @@ def test_allergy_extraction(note, expected):
 
 def test_no_known_allergies():
     assert extract_allergies("NKDA. On amlodipine.")["no_known_allergies"] is True
+
+
+# ------------------------------------------------------------ patient Q&A
+from backend.app.services import qa_service as qa
+
+
+def _priya_context():
+    rao = login("dr.rao")
+    p = ps.get_patient(rao, pid(rao, PRIYA))
+    records = ps.visible_records(rao, p["id"])
+    return build_summary(records), records, p
+
+
+def test_qa_direct_answers_cite_sources():
+    s, recs, p = _priya_context()
+    a = qa.answer_question("Any allergies?", s, recs, p, use_llm=False)
+    assert a["method"] == "summary" and "penicillin (rash)" in a["answer"] and "City General" in a["answer"]
+    assert "aspirin" in qa.answer_question("Is she on blood thinners?", s, recs, p)["answer"]
+    assert "Yes: metformin" in qa.answer_question("Is she on metformin?", s, recs, p)["answer"]
+    assert "No record of warfarin" in qa.answer_question("Is she on warfarin?", s, recs, p)["answer"]
+    assert qa.answer_question("What is her blood type?", s, recs, p)["answer"] == "Blood type: B+."
+
+
+def test_qa_safety_check_for_proposed_drug():
+    s, recs, p = _priya_context()
+    a = qa.answer_question("Can I give amoxicillin?", s, recs, p)
+    assert a["method"] == "safety check" and "penicillin" in a["answer"]
+    a = qa.answer_question("Is it safe to prescribe warfarin?", s, recs, p)
+    assert "aspirin" in a["answer"] and "bleeding" in a["answer"]       # interaction with current aspirin
+
+
+def test_qa_never_invents_undocumented_facts(monkeypatch):
+    s, recs, p = _priya_context()
+    monkeypatch.setattr(qa, "find_evidence", lambda q, r, top_k=4: [])
+    a = qa.answer_question("Does she smoke?", s, recs, p, use_llm=True)
+    assert a["answer"].startswith("Not documented")
+
+
+def test_qa_why_question_without_stated_reason(monkeypatch):
+    s, recs, p = _priya_context()
+    ev = [{"record_id": 3, "text": "Started aspirin 81 mg daily and atorvastatin 20 mg daily.", "source": "City General"}]
+    monkeypatch.setattr(qa, "find_evidence", lambda q, r, top_k=4: ev)
+    a = qa.answer_question("Why was she started on aspirin?", s, recs, p, use_llm=True)
+    assert "does not state the reason" in a["answer"] and a["evidence"] == ev
+
+
+def test_qa_rejects_llm_answer_that_adds_facts(monkeypatch):
+    s, recs, p = _priya_context()
+    ev = [{"record_id": 9, "text": "Heart failure and chronic kidney disease.", "source": "City General, 2026-08-13"}]
+    monkeypatch.setattr(qa, "find_evidence", lambda q, r, top_k=4: ev)
+    monkeypatch.setattr(qa, "_llm_answer", lambda q, e: "He is treated with diuretics and ACE inhibitors.")
+    assert qa.answer_question("How is it treated?", s, recs, p, use_llm=True)["method"] == "retrieval"
+    monkeypatch.setattr(qa, "_llm_answer", lambda q, e: "He has heart failure and chronic kidney disease [R9].")
+    assert qa.answer_question("What conditions are noted?", s, recs, p, use_llm=True)["method"] in ("summary", "local LLM")
+    assert qa.grounded("He has heart failure and chronic kidney disease.", ev, recs)
+    assert not qa.grounded("Started furosemide 80 mg.", ev, recs)
