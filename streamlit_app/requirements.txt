@@ -10,4 +10,5 @@ requests>=2.31
 numpy>=1.26
 pandas>=2.0
 sqlalchemy>=2.0
-streamlit>=1.40
+streamlit>=1.50
+qrcode[pil]>=7.4

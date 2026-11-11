@@ -1,40 +1,77 @@
 # Clinical Intelligence System
 
-Full-stack AI application that turns an unstructured physician note into structured clinical insight. A transformer NER model extracts medications, doses, symptoms and diagnoses; each entity is grounded in **RxNorm**, **OpenFDA** and **PubMed**; every note gets a **severity flag**; notes are stored in SQLite and a **ChromaDB** vector index, and a **RAG** endpoint retrieves similar past cases and has a **local LLM** summarise them. A **React + TypeScript dashboard** ties it together.
+**Private medical history for practitioners, available in an emergency.**
+
+Patients rarely carry their medical history. When they arrive at a different hospital, especially in an emergency, the doctor may not know their **allergies, current medications or conditions**. This system builds each patient's history automatically from clinical notes, lets each hospital keep its own records, and shares them across hospitals **only with patient consent or a logged emergency access**.
 
 > Built as a team project for the Saint Peter's University Academic Symposium.
 > **My contributions:** the backend: BERT entity-extraction pipeline, FastAPI API, and PubMed / OpenFDA / RxNorm integration.
 
-**▶ Live demo:** _link added after deployment (see [Online demo](#online-demo-streamlit))_
+**▶ Live demo:** _link added after deployment (see [Run it](#run-it))_. Demo login `dr.lee` / `demo1234`. All patients and notes are fictional.
 
-![Note analysis](docs/streamlit_analyse.png)
+![Emergency access: allergy alert when a new hospital prescribes amoxicillin](docs/app_new_alert.png)
 
-## How it works
+## The scenario it solves
+
+Priya's whole history is at **City General**. She collapses and is brought to **Riverside**, where Dr. Lee has never seen her.
+
+1. Dr. Lee searches the network by health ID and sees *that* records exist at City General, but not their contents.
+2. Priya can't consent, so Dr. Lee uses **emergency access** ("break the glass") with a reason. It's granted for 24 hours, logged, and visible to City General.
+3. The **emergency summary** shows: ⚠️ **penicillin allergy (rash)**; metformin, lisinopril, aspirin and atorvastatin with doses; type 2 diabetes and hypertension.
+4. Dr. Lee writes a note prescribing amoxicillin. The note analyser flags **"amoxicillin conflicts with documented allergy to penicillin"**.
+5. She asks *"Is she on blood thinners?"* → *"Yes: aspirin 81 mg daily [City General Hospital, 2026-10-02]"*.
+
+## Features
+
+| | What it does |
+|---|---|
+| **1. Patient history** | Notes from every visit are analysed and combined into one summary: allergies, current medications with doses (and older ones), conditions, visit timeline |
+| **2. Privacy** | Practitioner login (PBKDF2-hashed passwords, signed API tokens). Staff see their own hospital's records; clinical data endpoints require login |
+| **3. Cross-hospital sharing** | Record locator; **patient consent** with a one-time code (simulated SMS, 7 days); **emergency access** with a reason (24 h, flagged); full **access log**; export in **HL7 FHIR R4** |
+| **4. Safety alerts** | Allergy vs. drug (incl. drug classes, e.g. penicillin → amoxicillin), interactions (e.g. warfarin + NSAID), duplicate drugs, **different doses at different hospitals**, FDA label check against the patient's allergies |
+| **5. Ask about the patient** | Direct, sourced answers for common emergency questions and "Can I give X?" safety checks; other questions use a **local LLM** (Qwen2.5-Instruct, runs on the server) with guardrails |
+| **6. Emergency card** | Printable card with a QR code holding the critical facts: readable with no system connection |
+| **Note analyser** | BERT NER (Hugging Face) + rules: medications with doses, symptoms, diagnoses, **allergies**, severity flag; grounding in **RxNorm, OpenFDA, PubMed** |
+
+<p>
+<img src="docs/app_consent_alerts.png" width="49%" alt="Consent reveals a cross-hospital interaction">
+<img src="docs/app_card.png" width="49%" alt="Emergency card">
+</p>
+
+## How the LLM is kept honest
+
+Small models invent things. In testing, one answered *"No"* to "Does she smoke?" when nothing was recorded, and another explained a prescription with a reason that wasn't in the notes. So answers are layered:
+
+1. **Direct answers from the structured history** for allergies, medications, blood thinners, conditions, last visit, and "can I give X?". No LLM.
+2. **Evidence retrieval**: sentence embeddings (all-MiniLM-L6-v2) over the patient's *accessible* notes only. Nothing relevant → "Not documented"; the LLM is never asked.
+3. **"Why" questions** without a stated reason → "The record does not state the reason."
+4. **Local LLM** phrases an answer from the evidence; a **grounding check** rejects it if it adds drugs, conditions, numbers or other content words not in the evidence.
+5. **Source sentences are always shown.**
+
+The LLM runs locally so patient data is not sent to an outside AI company.
+
+## Architecture
 
 ```
-clinical note
-   │
-   ▼
-BERT NER  (d4data/biomedical-ner-all, Hugging Face)
-   │  post-processing: rejoin split words, "chest" + "pain" → "chest pain",
-   │  attach doses to drugs, drop generic words, dictionary safety net
-   ▼
-medications (+dose) · symptoms · diagnoses ──► severity flag (rule-based, with reasons)
-   │
-   ├─► RxNorm   normalise each drug to its RxCUI
-   ├─► OpenFDA  single-ingredient drug label: indications, warnings
-   └─► PubMed   most relevant article per condition / symptom / drug side effects
-   ▼
-SQLite (SQLAlchemy)  +  ChromaDB (all-MiniLM-L6-v2 embeddings)
-   │
-   ▼
-RAG: vector search for similar cases → TinyLlama writes a one-sentence summary,
-     grounding check rejects it if it mentions facts from another case
+clinical note ─► Note analyser (BERT NER + allergy rules + severity) ─► RxNorm / OpenFDA / PubMed
+                                    │
+                                    ▼
+            SQLite: Hospital · Practitioner · Patient · Registration · ClinicalRecord
+                    AccessGrant (consent / emergency) · ConsentRequest (OTP) · AccessLog
+                                    │
+     access control (own hospital │ consent │ emergency) ─► only visible records leave this layer
+                                    │
+          ┌──────────────┬──────────┴─────────┬───────────────┬──────────────┐
+      summary +      patient Q&A         FHIR R4 export    emergency card   access log
+    safety alerts  (rules → retrieval
+                    → guarded local LLM)
 ```
 
-## Evaluation
+Interfaces: **Streamlit app** (`streamlit_app/app.py`) and a **FastAPI** backend (`/auth/login`, `/patients/...`; docs at `/docs`).
 
-30 hand-labelled clinical notes (133 entities, `evaluation/gold_notes.json`), BERT pipeline vs. a keyword baseline. Strict = exact match after normalisation; relaxed = one contains the other ("diabetes" ≈ "type 2 diabetes").
+## Note analyser evaluation
+
+30 hand-labelled notes (133 entities), BERT pipeline vs. keyword baseline. Strict = exact match; relaxed = partial ("diabetes" ≈ "type 2 diabetes").
 
 | Category | Precision | Recall | F1 (strict) | F1 (relaxed) | Keyword baseline F1 |
 |---|---|---|---|---|---|
@@ -43,82 +80,20 @@ RAG: vector search for similar cases → TinyLlama writes a one-sentence summary
 | Diagnoses | 0.75 | 0.64 | **0.69** | 0.89 | 0.16 |
 | **Overall** | 0.76 | 0.71 | **0.73** | 0.91 | 0.22 |
 
-```bash
-python -m evaluation.evaluate      # writes evaluation/results.md
-```
-
-The notes were written for this evaluation and the code was not tuned on them afterwards. It is a small set, so treat the numbers as indicative.
-
-## Online demo (Streamlit)
-
-`streamlit_app/app.py` runs the whole pipeline in one process, so it can be hosted for free on
-[Streamlit Community Cloud](https://share.streamlit.io): repository `malihashaik68/clinical-intelligence-system`,
-branch `main`, main file `streamlit_app/app.py`. It has four tabs: **Analyse a note**, **Similar cases (RAG)**,
-**Records & analytics** and **Model evaluation**. Five example cases are loaded at start-up, so search works immediately.
-
-To fit the free tier, the 2.2 GB TinyLlama step is off online (`RAG_USE_LLM=0`); RAG answers then come
-straight from the most similar record. Everything else (BERT, severity, RxNorm / OpenFDA / PubMed,
-vector search, analytics, evaluation) runs for real. Locally: `streamlit run streamlit_app/app.py`.
-
-<p>
-<img src="docs/streamlit_rag.png" width="49%" alt="Streamlit RAG tab">
-<img src="docs/streamlit_eval.png" width="49%" alt="Streamlit evaluation tab">
-</p>
-
-## Dashboard (React + TypeScript)
-
-The full web app for running locally against the FastAPI backend (includes the TinyLlama summaries).
-
-![React dashboard](docs/dashboard_analyse.png)
-
-
-| Tab | What it shows |
-|---|---|
-| **Note analysis** | Paste a note → severity badge with reasons, entities as chips (drugs with doses), RxNorm / OpenFDA drug cards, PubMed links, raw model output with confidence and source |
-| **Similar cases (RAG)** | Ask a question → answer (LLM summary + facts from the best match) and the retrieved records with similarity distance |
-| **Records & analytics** | Counts by priority, top diagnoses / symptoms / medications, record table with diagnosis filter |
-
-<p>
-<img src="docs/dashboard_rag.png" width="49%" alt="RAG tab">
-<img src="docs/dashboard_records.png" width="49%" alt="Records tab">
-</p>
-
-## API
-
-| Method | Path | What it does |
-|---|---|---|
-| POST | `/extract/from-note` | Full pipeline: NER → severity → RxNorm / OpenFDA / PubMed → SQLite + ChromaDB |
-| POST | `/extract/context` | Grounding only, for entities you already have |
-| POST | `/search/` | Vector search for similar stored notes |
-| POST | `/rag/` | Similar cases + local-LLM summary |
-| GET | `/records/` | Stored records (`diagnosis`, `symptom`, `medication`, `skip`, `limit`) |
-| GET | `/records/{id}` | One record |
-| GET | `/analytics/summary` | Totals, top entities, severity counts |
-| GET | `/rxnorm/normalize`, `/openfda/drug`, `/pubmed/search` | Individual source lookups |
-| GET | `/health/` | Health check |
-
-Interactive docs: http://localhost:8000/docs
+Small, synthetic test set: treat as indicative. Reproduce with `python -m evaluation.evaluate`.
 
 ## Run it
 
-Backend (Python 3.10+):
-
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install torch --index-url https://download.pytorch.org/whl/cpu   # small CPU-only build
-pip install -r requirements.txt
-uvicorn backend.app.main:app --reload
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt streamlit pandas
+streamlit run streamlit_app/app.py          # demo data is created on first start
 ```
 
-Frontend (Node 18+), in a second terminal:
+API instead: `uvicorn backend.app.main:app --reload`, then `POST /auth/login` and use the token as `Authorization: Bearer <token>`.
 
-```bash
-cd frontend
-npm install
-npm run dev          # http://localhost:5173
-```
-
-First use downloads the models: NER ~260 MB, embeddings ~90 MB, TinyLlama ~2.2 GB. Set `RAG_USE_LLM=0` to skip TinyLlama on a small machine. A note takes ~20–35 s to analyse, mostly PubMed (NCBI allows ~3 requests/second without an API key; the client retries on rate limits).
+**Deploy free on Streamlit Community Cloud:** repository `malihashaik68/clinical-intelligence-system`, branch `main`, main file `streamlit_app/app.py`. First start takes a few minutes (models download). If the app runs out of memory, add `QA_USE_LLM = "0"` in the app's Secrets (answers then come from rules + retrieval), or host on Hugging Face Spaces (more memory). Settings: `QA_LLM_MODEL` (default `Qwen/Qwen2.5-0.5B-Instruct`; `Qwen/Qwen2.5-1.5B-Instruct` phrases better), `APP_SECRET_KEY` for API tokens.
 
 ## Tests
 
@@ -126,16 +101,15 @@ First use downloads the models: NER ~260 MB, embeddings ~90 MB, TinyLlama ~2.2 G
 pytest -q
 ```
 
-13 tests run in under a second without internet: models and external APIs are replaced with recorded outputs. They cover entity clean-up, the dictionary safety net, the full pipeline with database save and retrieval, search, RAG and its grounding check, analytics, severity rules, input validation and PubMed retries. GitHub Actions runs them on every push.
+36 tests, under 2 seconds, no model downloads: access control (other hospitals denied, one-time codes, emergency reason required, logging), summaries and alerts, Q&A guardrails, FHIR bundle, emergency card, API authentication, plus the note-analyser tests. GitHub Actions runs them on every push.
 
-## Limitations
+## Limitations (and what a real deployment needs)
 
-- No negation handling: "denies fever" would still list fever.
-- The NER model is general biomedical, not fine-tuned on clinical notes; symptoms are the weakest category (strict F1 above).
-- Severity flags are simple transparent rules, not a validated triage score.
-- TinyLlama is small; it writes only the summary sentence, and the structured facts come from the retrieved record.
-- PubMed and OpenFDA results are pointers to sources, not clinical recommendations.
+- **Demo, not a medical device**: fictional data; a real system needs regulatory compliance (HIPAA, India's DPDP Act), certified security, real identity verification and SMS delivery, and integration with hospital systems (FHIR APIs).
+- Hospitals are simulated in one database; in production each hospital's records would stay on its own servers and travel as FHIR.
+- Drug-safety rules are a small curated set, not a complete interaction database. No negation handling ("denies fever").
+- The React dashboard in `frontend/` is from the earlier note-analyser version and has not been updated for login.
 
 ## Tech stack
 
-Python · FastAPI · Hugging Face Transformers (BERT NER, TinyLlama) · Sentence-Transformers · ChromaDB · PyTorch · SQLAlchemy / SQLite · RxNorm, OpenFDA, PubMed (NCBI E-utilities) · React · TypeScript · Vite · Streamlit · pytest · GitHub Actions
+Python · FastAPI · Streamlit · Hugging Face Transformers (BERT NER, Qwen2.5 local LLM) · Sentence-Transformers · PyTorch · SQLAlchemy / SQLite · HL7 FHIR · RxNorm, OpenFDA, PubMed APIs · ChromaDB · qrcode / Pillow · pytest · GitHub Actions
