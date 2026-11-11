@@ -1,0 +1,142 @@
+{
+  "BERT pipeline": {
+    "strict": {
+      "medications": {
+        "precision": 0.941,
+        "recall": 0.941,
+        "f1": 0.941,
+        "tp": 32,
+        "fp": 2,
+        "fn": 2
+      },
+      "symptoms": {
+        "precision": 0.672,
+        "recall": 0.621,
+        "f1": 0.646,
+        "tp": 41,
+        "fp": 20,
+        "fn": 25
+      },
+      "diagnoses": {
+        "precision": 0.75,
+        "recall": 0.636,
+        "f1": 0.689,
+        "tp": 21,
+        "fp": 7,
+        "fn": 12
+      },
+      "micro_avg": {
+        "precision": 0.764,
+        "recall": 0.707,
+        "f1": 0.734,
+        "tp": 94,
+        "fp": 29,
+        "fn": 39
+      }
+    },
+    "relaxed": {
+      "medications": {
+        "precision": 0.971,
+        "recall": 0.971,
+        "f1": 0.971,
+        "tp": 33,
+        "fp": 1,
+        "fn": 1
+      },
+      "symptoms": {
+        "precision": 0.934,
+        "recall": 0.864,
+        "f1": 0.898,
+        "tp": 57,
+        "fp": 4,
+        "fn": 9
+      },
+      "diagnoses": {
+        "precision": 0.964,
+        "recall": 0.818,
+        "f1": 0.885,
+        "tp": 27,
+        "fp": 1,
+        "fn": 6
+      },
+      "micro_avg": {
+        "precision": 0.951,
+        "recall": 0.88,
+        "f1": 0.914,
+        "tp": 117,
+        "fp": 6,
+        "fn": 16
+      }
+    }
+  },
+  "Keyword baseline": {
+    "strict": {
+      "medications": {
+        "precision": 1.0,
+        "recall": 0.029,
+        "f1": 0.057,
+        "tp": 1,
+        "fp": 0,
+        "fn": 33
+      },
+      "symptoms": {
+        "precision": 0.929,
+        "recall": 0.197,
+        "f1": 0.325,
+        "tp": 13,
+        "fp": 1,
+        "fn": 53
+      },
+      "diagnoses": {
+        "precision": 0.6,
+        "recall": 0.091,
+        "f1": 0.158,
+        "tp": 3,
+        "fp": 2,
+        "fn": 30
+      },
+      "micro_avg": {
+        "precision": 0.85,
+        "recall": 0.128,
+        "f1": 0.222,
+        "tp": 17,
+        "fp": 3,
+        "fn": 116
+      }
+    },
+    "relaxed": {
+      "medications": {
+        "precision": 1.0,
+        "recall": 0.029,
+        "f1": 0.057,
+        "tp": 1,
+        "fp": 0,
+        "fn": 33
+      },
+      "symptoms": {
+        "precision": 1.0,
+        "recall": 0.212,
+        "f1": 0.35,
+        "tp": 14,
+        "fp": 0,
+        "fn": 52
+      },
+      "diagnoses": {
+        "precision": 1.0,
+        "recall": 0.152,
+        "f1": 0.263,
+        "tp": 5,
+        "fp": 0,
+        "fn": 28
+      },
+      "micro_avg": {
+        "precision": 1.0,
+        "recall": 0.15,
+        "f1": 0.261,
+        "tp": 20,
+        "fp": 0,
+        "fn": 113
+      }
+    }
+  }
+}
