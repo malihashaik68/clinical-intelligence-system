@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+requests
+pandas
+numpy
+beautifulsoup4
+lxml
+spacy
+scikit-learn
+matplotlib
+seaborn
+pydantic
+transformers
+torch
+sentencepiece
+accelerate
