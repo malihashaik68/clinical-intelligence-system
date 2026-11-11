@@ -258,3 +258,19 @@ def test_emergency_card_text_has_critical_facts():
     s, recs, p = _priya_context()
     text = card_text(p, s)
     assert "ALLERGIES: penicillin (rash)" in text and "B+" in text and "Arjun Sharma" in text
+
+
+
+def test_grounding_allows_words_from_the_question_but_not_new_facts():
+    ev = [{"record_id": 5, "text": "Seen for knee pain and swelling after a fall.", "source": "Riverside, 2026-11-01"}]
+    q = "How did the knee pain start?"
+    assert qa.grounded("The knee pain started after a fall.", ev, [], q)
+    assert not qa.grounded("The knee pain started after a fall.", ev, [])          # 'started' not in note
+    assert not qa.grounded("The knee pain started after a car accident.", ev, [], q)
+
+
+
+def test_last_visit_question_is_answered_directly():
+    s, recs, p = _priya_context()
+    a = qa.answer_question("What happened at the last visit?", s, recs, p, use_llm=False)
+    assert a["method"] == "summary" and a["answer"].startswith("Last visit:")

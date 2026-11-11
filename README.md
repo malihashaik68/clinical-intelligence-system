@@ -7,7 +7,7 @@ Patients rarely carry their medical history. When they arrive at a different hos
 > Built as a team project for the Saint Peter's University Academic Symposium.
 > **My contributions:** the backend: BERT entity-extraction pipeline, FastAPI API, and PubMed / OpenFDA / RxNorm integration.
 
-**▶ Live demo:** _link added after deployment (see [Run it](#run-it))_. Demo login `dr.lee` / `demo1234`. All patients and notes are fictional.
+**▶ Live demo: [clinical-intelligence-system.streamlit.app](https://clinical-intelligence-system-gfigtb4ekpgk73nltpdiyq.streamlit.app/)**. Log in as `dr.lee` / `demo1234`, open **Find a patient**, search `HID-4821-7730` and use emergency access. All patients and notes are fictional.
 
 ![Emergency access: allergy alert when a new hospital prescribes amoxicillin](docs/app_new_alert.png)
 
@@ -101,7 +101,7 @@ API instead: `uvicorn backend.app.main:app --reload`, then `POST /auth/login` an
 pytest -q
 ```
 
-35 tests, under 2 seconds, no model downloads: access control (other hospitals denied, one-time codes, emergency reason required, logging), summaries and alerts, Q&A guardrails, FHIR bundle, emergency card, API authentication, plus the note-analyser tests. GitHub Actions runs them on every push.
+37 tests, under 3 seconds, no model downloads: access control (other hospitals denied, one-time codes, emergency reason required, logging), summaries and alerts, Q&A guardrails, FHIR bundle, emergency card, API authentication, plus the note-analyser tests. GitHub Actions runs them on every push.
 
 ## Limitations (and what a real deployment needs)
 

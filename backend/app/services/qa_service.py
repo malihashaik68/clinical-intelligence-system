@@ -51,6 +51,12 @@ OPEN_QUESTION = re.compile(r"^\s*(why|how|when|what happened|describe|explain|te
 def _direct_answer(question: str, summary: dict, patient: dict) -> dict | None:
     q = question.lower()
     meds, older = summary["current_medications"], summary["older_medications"]
+    if re.search(r"\b(last|latest|recent|most recent) (visit|admission|encounter)", q):
+        if not summary["timeline"]:
+            return _answer("No visits are recorded.", "summary")
+        v = summary["timeline"][0]
+        return _answer(f"Last visit: {v['date']} at {v['hospital']} ({v['severity']} priority). {v['note']}",
+                       "summary", [{"record_id": v["record_id"], "text": v["note"], "source": _src(v)}])
     if OPEN_QUESTION.match(q):
         return None  # narrative questions are answered from the notes, not the summary lists
 
@@ -183,11 +189,13 @@ def _content_overlap(answer: str, evidence_text: str) -> float:
 MIN_OVERLAP = float(os.getenv("QA_MIN_OVERLAP", "0.75"))
 
 
-def grounded(answer: str, evidence: list[dict], records: list[dict]) -> bool:
-    """Reject answers that add words, drugs, conditions or numbers that are not in the evidence."""
+def grounded(answer: str, evidence: list[dict], records: list[dict], question: str = "") -> bool:
+    """Reject answers that add words, drugs, conditions or numbers that are not in the evidence.
+    Words from the question count as allowed for the wording check (repeating the question is
+    not inventing facts); drugs, conditions and numbers must still come from the evidence."""
     ev = " ".join(e["text"].lower() + " " + e["source"].lower() for e in evidence)
     a = answer.lower()
-    if "does not state" not in a and _content_overlap(a, ev) < MIN_OVERLAP:
+    if "does not state" not in a and _content_overlap(a, ev + " " + question.lower()) < MIN_OVERLAP:
         return False
     for term in _known_terms(records):
         if re.search(rf"\b{re.escape(term)}\b", a) and term not in ev:
@@ -232,7 +240,7 @@ def answer_question(question: str, summary: dict, records: list[dict], patient: 
     if use_llm:
         try:
             text = _llm_answer(question, evidence)
-            if text and grounded(text, evidence, records):
+            if text and grounded(text, evidence, records, question):
                 return _answer(text, "local LLM", evidence)
         except Exception as exc:  # model missing / out of memory -> fall back to the evidence
             return _answer(f"(LLM unavailable: {exc.__class__.__name__}) Most relevant notes are shown below.",
