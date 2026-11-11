@@ -3,6 +3,7 @@ recorded outputs, so these run in seconds without internet access."""
 import os
 
 os.environ["DATABASE_URL"] = "sqlite:///./test_clinical.db"
+os.environ["SEED_DEMO_DATA"] = "0"
 
 import pytest
 from fastapi.testclient import TestClient
@@ -101,8 +102,12 @@ def client(monkeypatch):
     monkeypatch.setattr(rag_service, "search_similar_records", fake_search)
     monkeypatch.setattr(rag_service, "USE_LLM", False)
     from backend.app.main import app
+    from backend.app.routes.deps import current_user
+    from backend.app.services.patient_service import User
+    app.dependency_overrides[current_user] = lambda: User(1, "tester", "Test User", "Physician", 1, "Test")
     with TestClient(app) as c:
         yield c
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -222,3 +227,14 @@ def test_longer_dictionary_term_replaces_shorter_model_term():
                                     e("kidney disease", "Disease_disorder")])
     assert r["diagnoses"] == ["heart failure", "chronic kidney disease"]
     assert r["symptoms"] == ["leg swelling"]
+
+
+
+def test_data_endpoints_require_login():
+    from backend.app.main import app
+    with TestClient(app) as c:
+        for method, path in [("get", "/records/"), ("get", "/analytics/summary"), ("post", "/search/"),
+                             ("post", "/rag/"), ("post", "/extract/from-note"), ("get", "/patients/")]:
+            r = c.get(path) if method == "get" else c.post(path, json={"query": "x", "clinical_note": "x"})
+            assert r.status_code == 401, path
+        assert c.get("/health/").status_code == 200          # public

@@ -24,7 +24,8 @@ def get_all_clinical_records(
     db = SessionLocal()
 
     try:
-        query = db.query(ClinicalRecord)
+        # patient records are only reachable through the access-controlled /patients endpoints
+        query = db.query(ClinicalRecord).filter(ClinicalRecord.patient_id.is_(None))
 
         if hasattr(ClinicalRecord, "created_at"):
             query = query.order_by(ClinicalRecord.created_at.desc())
@@ -54,7 +55,8 @@ def get_clinical_record_by_id(record_id: int):
     db = SessionLocal()
 
     try:
-        record = db.query(ClinicalRecord).filter(ClinicalRecord.id == record_id).first()
+        record = (db.query(ClinicalRecord)
+                  .filter(ClinicalRecord.id == record_id, ClinicalRecord.patient_id.is_(None)).first())
 
         if not record:
             return {"error": f"Record {record_id} not found"}

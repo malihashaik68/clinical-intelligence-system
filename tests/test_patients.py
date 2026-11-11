@@ -6,6 +6,7 @@ import os
 import re
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test_clinical.db")
+os.environ["SEED_DEMO_DATA"] = "0"
 
 import pytest
 
@@ -216,3 +217,44 @@ def test_qa_rejects_llm_answer_that_adds_facts(monkeypatch):
     assert qa.answer_question("What conditions are noted?", s, recs, p, use_llm=True)["method"] in ("summary", "local LLM")
     assert qa.grounded("He has heart failure and chronic kidney disease.", ev, recs)
     assert not qa.grounded("Started furosemide 80 mg.", ev, recs)
+
+
+
+# ------------------------------------------------------------------- API
+def test_api_patient_workflow():
+    from fastapi.testclient import TestClient
+    from backend.app.main import app
+
+    with TestClient(app) as c:
+        assert c.post("/auth/login", json={"username": "dr.lee", "password": "nope"}).status_code == 401
+        token = c.post("/auth/login", json={"username": "dr.lee", "password": "demo1234"}).json()["token"]
+        h = {"Authorization": f"Bearer {token}"}
+        assert c.get("/patients/", headers={"Authorization": "Bearer forged.1.abc"}).status_code == 401
+
+        maria = c.get("/patients/search", params={"health_id": MARIA}, headers=h).json()[0]["id"]
+        body = c.get(f"/patients/{maria}/summary", headers=h).json()
+        assert [a["substance"] for a in body["summary"]["allergies"]] == ["sulfa drugs"]
+
+        rao = {"Authorization": "Bearer " + c.post("/auth/login", json={"username": "dr.rao", "password": "demo1234"}).json()["token"]}
+        assert c.get(f"/patients/{maria}/summary", headers=rao).status_code == 403   # other hospital
+        code = c.post(f"/patients/{maria}/consent/request", headers=rao).json()["simulated_sms_code"]
+        assert c.post(f"/patients/{maria}/consent/confirm", json={"code": code}, headers=rao).json()["granted"]
+        assert c.get(f"/patients/{maria}/summary", headers=rao).status_code == 200
+
+        ans = c.post(f"/patients/{maria}/ask", json={"question": "Any allergies?"}, headers=h).json()
+        assert "sulfa" in ans["answer"]
+        bundle = c.get(f"/patients/{maria}/fhir", headers=h).json()
+        assert bundle["resourceType"] == "Bundle"
+        types = {e["resource"]["resourceType"] for e in bundle["entry"]}
+        assert {"Patient", "AllergyIntolerance", "Condition", "MedicationStatement", "Encounter"} <= types
+        card = c.get(f"/patients/{maria}/emergency-card", headers=h)
+        assert card.headers["content-type"] == "image/png" and card.content[:4] == b"\x89PNG"
+        actions = [e["action"] for e in c.get(f"/patients/{maria}/access-log", headers=h).json()]
+        assert {"consent_granted", "ask", "export_fhir", "emergency_card"} <= set(actions)
+
+
+def test_emergency_card_text_has_critical_facts():
+    from backend.app.services.emergency_card import card_text
+    s, recs, p = _priya_context()
+    text = card_text(p, s)
+    assert "ALLERGIES: penicillin (rash)" in text and "B+" in text and "Arjun Sharma" in text

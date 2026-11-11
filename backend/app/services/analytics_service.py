@@ -9,7 +9,7 @@ def get_analytics_summary():
     db = SessionLocal()
 
     try:
-        records = db.query(ClinicalRecord).all()
+        records = db.query(ClinicalRecord).filter(ClinicalRecord.patient_id.is_(None)).all()
 
         diagnosis_counter = Counter()
         symptom_counter = Counter()
