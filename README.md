@@ -1,9 +1,11 @@
 # Clinical Intelligence System
 
-Privacy-aware clinical intelligence backend that turns an unstructured physician note into structured clinical context: a transformer-based NER model extracts medications, doses, symptoms and diagnoses, then each entity is grounded in trusted medical sources (**RxNorm**, **OpenFDA**, **PubMed**) and the result is stored for later retrieval.
+Full-stack AI application that turns an unstructured physician note into structured clinical insight. A transformer NER model extracts medications, doses, symptoms and diagnoses; each entity is grounded in **RxNorm**, **OpenFDA** and **PubMed**; every note gets a **severity flag**; notes are stored in SQLite and a **ChromaDB** vector index, and a **RAG** endpoint retrieves similar past cases and has a **local LLM** summarise them. A **React + TypeScript dashboard** ties it together.
 
 > Built as a team project for the Saint Peter's University Academic Symposium.
 > **My contributions:** the backend: BERT entity-extraction pipeline, FastAPI API, and PubMed / OpenFDA / RxNorm integration.
+
+![Note analysis](docs/dashboard_analyse.png)
 
 ## How it works
 
@@ -11,49 +13,72 @@ Privacy-aware clinical intelligence backend that turns an unstructured physician
 clinical note
    │
    ▼
-BERT NER (d4data/biomedical-ner-all, Hugging Face)
-   │  + post-processing: rejoin split words, "chest"+"pain" → "chest pain",
-   │    attach doses to drugs, drop generic words, dictionary safety net
+BERT NER  (d4data/biomedical-ner-all, Hugging Face)
+   │  post-processing: rejoin split words, "chest" + "pain" → "chest pain",
+   │  attach doses to drugs, drop generic words, dictionary safety net
    ▼
-medications (+dose) · symptoms · diagnoses
+medications (+dose) · symptoms · diagnoses ──► severity flag (rule-based, with reasons)
    │
    ├─► RxNorm   normalise each drug to its RxCUI
-   ├─► OpenFDA  drug label: indications, warnings
-   └─► PubMed   most relevant article per diagnosis / symptom / drug side effects
+   ├─► OpenFDA  single-ingredient drug label: indications, warnings
+   └─► PubMed   most relevant article per condition / symptom / drug side effects
    ▼
-structured clinical context ──► SQLite (SQLAlchemy) ──► GET /records
+SQLite (SQLAlchemy)  +  ChromaDB (all-MiniLM-L6-v2 embeddings)
+   │
+   ▼
+RAG: vector search for similar cases → TinyLlama writes a one-sentence summary,
+     grounding check rejects it if it mentions facts from another case
 ```
 
-## Example (real output)
+## Evaluation
 
-Input note:
-> 58-year-old female with a history of hypertension and type 2 diabetes presents with chest pain and shortness of breath for two days. She reports fatigue and dizziness. Current medications include metformin 500 mg twice daily and lisinopril 10 mg daily. Started aspirin 81 mg.
+30 hand-labelled clinical notes (133 entities, `evaluation/gold_notes.json`), BERT pipeline vs. a keyword baseline. Strict = exact match after normalisation; relaxed = one contains the other ("diabetes" ≈ "type 2 diabetes").
 
-Extracted:
+| Category | Precision | Recall | F1 (strict) | F1 (relaxed) | Keyword baseline F1 |
+|---|---|---|---|---|---|
+| Medications | 0.94 | 0.94 | **0.94** | 0.97 | 0.06 |
+| Symptoms | 0.67 | 0.62 | **0.65** | 0.90 | 0.33 |
+| Diagnoses | 0.75 | 0.64 | **0.69** | 0.89 | 0.16 |
+| **Overall** | 0.76 | 0.71 | **0.73** | 0.91 | 0.22 |
 
-| Type | Entities |
+```bash
+python -m evaluation.evaluate      # writes evaluation/results.md
+```
+
+The notes were written for this evaluation and the code was not tuned on them afterwards. It is a small set, so treat the numbers as indicative.
+
+## Dashboard (React + TypeScript)
+
+| Tab | What it shows |
 |---|---|
-| Medications | metformin, 500 mg twice daily · lisinopril, 10 mg · aspirin, 81 mg |
-| Symptoms | chest pain · shortness of breath · fatigue · dizziness |
-| Diagnoses | hypertension · type 2 diabetes |
+| **Note analysis** | Paste a note → severity badge with reasons, entities as chips (drugs with doses), RxNorm / OpenFDA drug cards, PubMed links, raw model output with confidence and source |
+| **Similar cases (RAG)** | Ask a question → answer (LLM summary + facts from the best match) and the retrieved records with similarity distance |
+| **Records & analytics** | Counts by priority, top diagnoses / symptoms / medications, record table with diagnosis filter |
 
-Grounding: RxNorm RxCUIs metformin `6809`, lisinopril `29046`, aspirin `1191`; 3 OpenFDA labels per drug; PubMed, e.g. *hypertension treatment* → "2024 ESC Guidelines for the management of elevated blood pressure and hypertension" (PMID 39210715), *metformin adverse effects* → "Adverse Effects of Metformin From Diabetes to COVID-19, Cancer, Neurodegenerative Diseases…" (PMID 34671273).
+<p>
+<img src="docs/dashboard_rag.png" width="49%" alt="RAG tab">
+<img src="docs/dashboard_records.png" width="49%" alt="Records tab">
+</p>
 
 ## API
 
 | Method | Path | What it does |
 |---|---|---|
-| POST | `/extract/from-note` | Full pipeline: BERT NER → RxNorm / OpenFDA / PubMed → saved record |
-| POST | `/extract/from-note-keywords` | Fast keyword baseline (no model) |
+| POST | `/extract/from-note` | Full pipeline: NER → severity → RxNorm / OpenFDA / PubMed → SQLite + ChromaDB |
 | POST | `/extract/context` | Grounding only, for entities you already have |
-| GET | `/rxnorm/normalize?drug_name=` | RxNorm lookup |
-| GET | `/openfda/drug?drug_name=` | OpenFDA drug labels |
-| GET | `/pubmed/search?query=` | PubMed search |
-| GET | `/records/` | All saved records |
+| POST | `/search/` | Vector search for similar stored notes |
+| POST | `/rag/` | Similar cases + local-LLM summary |
+| GET | `/records/` | Stored records (`diagnosis`, `symptom`, `medication`, `skip`, `limit`) |
+| GET | `/records/{id}` | One record |
+| GET | `/analytics/summary` | Totals, top entities, severity counts |
+| GET | `/rxnorm/normalize`, `/openfda/drug`, `/pubmed/search` | Individual source lookups |
+| GET | `/health/` | Health check |
 
 Interactive docs: http://localhost:8000/docs
 
 ## Run it
+
+Backend (Python 3.10+):
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -62,13 +87,15 @@ pip install -r requirements.txt
 uvicorn backend.app.main:app --reload
 ```
 
+Frontend (Node 18+), in a second terminal:
+
 ```bash
-curl -X POST http://localhost:8000/extract/from-note \
-  -H "content-type: application/json" \
-  -d '{"clinical_note": "History of asthma. Presents with headache. Takes sertraline 50 mg."}'
+cd frontend
+npm install
+npm run dev          # http://localhost:5173
 ```
 
-The first request downloads the NER model (~260 MB). A full request takes ~30 s, mostly PubMed (NCBI allows ~3 requests/second without an API key; the client backs off and retries on rate limits).
+First use downloads the models: NER ~260 MB, embeddings ~90 MB, TinyLlama ~2.2 GB. Set `RAG_USE_LLM=0` to skip TinyLlama on a small machine. A note takes ~20–35 s to analyse, mostly PubMed (NCBI allows ~3 requests/second without an API key; the client retries on rate limits).
 
 ## Tests
 
@@ -76,16 +103,16 @@ The first request downloads the NER model (~260 MB). A full request takes ~30 s,
 pytest -q
 ```
 
-The tests use recorded model output and stubbed APIs, so they run in under a second without internet access. They cover the entity clean-up (split words, body part + symptom, doses, dictionary safety net), the full `/extract/from-note` route with database save and retrieval, the keyword route, and PubMed retry on rate limits.
+13 tests run in under a second without internet: models and external APIs are replaced with recorded outputs. They cover entity clean-up, the dictionary safety net, the full pipeline with database save and retrieval, search, RAG and its grounding check, analytics, severity rules, input validation and PubMed retries. GitHub Actions runs them on every push.
 
 ## Limitations
 
-- No negation handling yet: "denies fever" would still list fever.
-- The dictionary safety net covers a short list of common terms only.
-- The NER model is general biomedical, not fine-tuned on clinical notes.
-- PubMed returns the top article by relevance; it is a pointer to literature, not a clinical recommendation.
-- The React frontend in `frontend/` is still the Vite starter template.
+- No negation handling: "denies fever" would still list fever.
+- The NER model is general biomedical, not fine-tuned on clinical notes; symptoms are the weakest category (strict F1 above).
+- Severity flags are simple transparent rules, not a validated triage score.
+- TinyLlama is small; it writes only the summary sentence, and the structured facts come from the retrieved record.
+- PubMed and OpenFDA results are pointers to sources, not clinical recommendations.
 
 ## Tech stack
 
-Python · FastAPI · Hugging Face Transformers (BERT NER) · PyTorch · SQLAlchemy / SQLite · RxNorm, OpenFDA and PubMed (NCBI E-utilities) APIs · pytest · React (Vite)
+Python · FastAPI · Hugging Face Transformers (BERT NER, TinyLlama) · Sentence-Transformers · ChromaDB · PyTorch · SQLAlchemy / SQLite · RxNorm, OpenFDA, PubMed (NCBI E-utilities) · React · TypeScript · Vite · pytest · GitHub Actions
