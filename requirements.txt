@@ -1,16 +1,11 @@
-fastapi
-uvicorn
-requests
-pandas
-numpy
-beautifulsoup4
-lxml
-spacy
-scikit-learn
-matplotlib
-seaborn
-pydantic
-transformers
-torch
-sentencepiece
-accelerate
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2.0
+requests>=2.31
+numpy>=1.26
+sqlalchemy>=2.0
+transformers>=4.40
+torch>=2.2
+# development / tests
+pytest>=8.0
+httpx>=0.27
